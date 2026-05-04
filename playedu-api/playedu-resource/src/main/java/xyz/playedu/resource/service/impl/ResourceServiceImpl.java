@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 杭州白书科技有限公司
+ * Copyright (C) 2023 鏉窞鐧戒功绉戞妧鏈夐檺鍏徃
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,19 @@
 package xyz.playedu.resource.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import xyz.playedu.common.constant.BackendConstant;
 import xyz.playedu.common.exception.NotFoundException;
 import xyz.playedu.common.service.AppConfigService;
 import xyz.playedu.common.types.paginate.PaginationResult;
@@ -36,18 +45,24 @@ import xyz.playedu.resource.service.ResourceService;
 
 /**
  * @author tengteng
- * @description 针对表【resource】的数据库操作Service实现
+ * @description 閽堝琛ㄣ€恟esource銆戠殑鏁版嵁搴撴搷浣淪ervice瀹炵幇
  * @createDate 2023-02-23 10:50:26
  */
 @Service
+@Slf4j
 public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
         implements ResourceService {
+
+    private static final Pattern HLS_SEGMENT_LINE =
+            Pattern.compile("^(?!#)([^\\r\\n]+)$", Pattern.MULTILINE);
 
     @Autowired private ResourceExtraService resourceExtraService;
 
     @Autowired private ResourceCategoryService relationService;
 
     @Autowired private AppConfigService appConfigService;
+
+    @Autowired private HlsTranscodeService hlsTranscodeService;
 
     @Override
     public PaginationResult<Resource> paginate(int page, int size, ResourcePaginateFilter filter) {
@@ -89,6 +104,7 @@ public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
         resource.setDisk(disk);
         resource.setPath(path);
         resource.setCreatedAt(new Date());
+        resource.setHlsStatus(0);
         resource.setParentId(parentId);
         resource.setIsHidden(isHidden);
         save(resource);
@@ -245,7 +261,7 @@ public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
                                 preSignUrlMap.put(resource.getId(), url);
                             }
                         } catch (Exception e) {
-                            log.error(e.getMessage());
+                            log.error("generate pre-sign url failed, resourceId={}", resource.getId(), e);
                         }
                     });
         }
@@ -266,5 +282,76 @@ public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
             }
         }
         return preSignUrlMap;
+    }
+
+    @Override
+    public void scheduleHlsTranscode(Integer id) {
+        hlsTranscodeService.transcode(id);
+    }
+
+    @Override
+    public boolean isHlsReady(Resource resource) {
+        return resource != null
+                && BackendConstant.RESOURCE_TYPE_VIDEO.equals(resource.getType())
+                && Integer.valueOf(2).equals(resource.getHlsStatus());
+    }
+
+    @Override
+    public String getHlsManifest(Integer resourceId, String keyUrl, long expireSeconds) {
+        long startAt = System.currentTimeMillis();
+        Resource resource = getById(resourceId);
+        if (!isHlsReady(resource)) {
+            log.warn("hls manifest requested before ready, resourceId={}, hlsStatus={}",
+                    resourceId, resource == null ? null : resource.getHlsStatus());
+            return null;
+        }
+
+        S3Util s3Util = new S3Util(appConfigService.getS3Config());
+        String manifest = s3Util.getContent(hlsPlaylistPath(resource.getPath()));
+        manifest =
+                manifest.replaceAll(
+                        "#EXT-X-KEY:METHOD=AES-128,URI=\"[^\"]+\"",
+                        Matcher.quoteReplacement("#EXT-X-KEY:METHOD=AES-128,URI=\"" + keyUrl + "\""));
+
+        Matcher matcher = HLS_SEGMENT_LINE.matcher(manifest);
+        StringBuffer buffer = new StringBuffer();
+        String prefix = hlsPrefix(resource.getPath());
+        int segmentCount = 0;
+        while (matcher.find()) {
+            String segment = matcher.group(1).trim();
+            if (segment.isEmpty() || segment.startsWith("http://") || segment.startsWith("https://")) {
+                continue;
+            }
+            String segmentUrl =
+                    s3Util.generateEndpointPreSignUrl(prefix + segment, "", expireSeconds);
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(segmentUrl));
+            segmentCount++;
+        }
+        matcher.appendTail(buffer);
+        log.info(
+                "generated hls manifest, resourceId={}, segmentCount={}, elapsedMs={}",
+                resourceId,
+                segmentCount,
+                System.currentTimeMillis() - startAt);
+        return buffer.toString();
+    }
+
+    @Override
+    public byte[] getHlsKey(Integer resourceId) {
+        Resource resource = getById(resourceId);
+        if (resource == null || StringUtil.isEmpty(resource.getHlsKey())) {
+            return null;
+        }
+        return HexFormat.of().parseHex(resource.getHlsKey());
+    }
+
+    private String hlsPrefix(String originalPath) {
+        int dotIndex = originalPath.lastIndexOf('.');
+        String basePath = dotIndex > -1 ? originalPath.substring(0, dotIndex) : originalPath;
+        return basePath + "_hls/";
+    }
+
+    private String hlsPlaylistPath(String originalPath) {
+        return hlsPrefix(originalPath) + "index.m3u8";
     }
 }

@@ -90,6 +90,9 @@ public class UploadController {
                         info.getSavePath(),
                         CommonConstant.ZERO,
                         CommonConstant.ZERO);
+        if (BackendConstant.RESOURCE_TYPE_VIDEO.equals(res.getType())) {
+            resourceService.scheduleHlsTranscode(res.getId());
+        }
         return JsonResponse.data(res);
     }
 
@@ -202,6 +205,9 @@ public class UploadController {
 
         // 记录资源详情信息
         doSaveResourceExtra(resource, req.getPoster(), req.getDuration());
+        if (BackendConstant.RESOURCE_TYPE_VIDEO.equals(resource.getType())) {
+            resourceService.scheduleHlsTranscode(resource.getId());
+        }
 
         return JsonResponse.success();
     }

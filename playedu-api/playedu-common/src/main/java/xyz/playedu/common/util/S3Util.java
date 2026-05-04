@@ -22,10 +22,24 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.*;
+import com.amazonaws.services.s3.model.AbortMultipartUploadRequest;
 import com.amazonaws.services.s3.model.AccessControlList;
+import com.amazonaws.services.s3.model.CompleteMultipartUploadRequest;
+import com.amazonaws.services.s3.model.DeleteObjectRequest;
+import com.amazonaws.services.s3.model.GeneratePresignedUrlRequest;
 import com.amazonaws.services.s3.model.Grant;
 import com.amazonaws.services.s3.model.GroupGrantee;
+import com.amazonaws.services.s3.model.InitiateMultipartUploadRequest;
+import com.amazonaws.services.s3.model.InitiateMultipartUploadResult;
+import com.amazonaws.services.s3.model.ListPartsRequest;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PartETag;
+import com.amazonaws.services.s3.model.PartListing;
+import com.amazonaws.services.s3.model.PartSummary;
+import com.amazonaws.services.s3.model.ResponseHeaderOverrides;
+import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.s3.model.UploadPartRequest;
+import com.amazonaws.services.s3.model.UploadPartResult;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -42,6 +56,8 @@ import xyz.playedu.common.types.config.S3Config;
 public class S3Util {
 
     private S3Config defaultConfig;
+    private volatile AmazonS3 client;
+    private volatile boolean bucketChecked;
 
     public S3Config getS3Config() {
         return defaultConfig;
@@ -53,6 +69,8 @@ public class S3Util {
 
     public S3Util setConfig(S3Config config) {
         defaultConfig = config;
+        client = null;
+        bucketChecked = false;
         return this;
     }
 
@@ -61,27 +79,42 @@ public class S3Util {
         if (defaultConfig == null) {
             throw new ServiceException("存储服务未配置");
         }
-        AWSCredentials credentials =
-                new BasicAWSCredentials(defaultConfig.getAccessKey(), defaultConfig.getSecretKey());
+        if (client == null) {
+            synchronized (this) {
+                if (client == null) {
+                    AWSCredentials credentials =
+                            new BasicAWSCredentials(
+                                    defaultConfig.getAccessKey(), defaultConfig.getSecretKey());
+                    AwsClientBuilder.EndpointConfiguration endpointConfiguration =
+                            new AwsClientBuilder.EndpointConfiguration(
+                                    defaultConfig.getEndpoint(), defaultConfig.getRegion());
+                    client =
+                            AmazonS3ClientBuilder.standard()
+                                    .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                                    .withEndpointConfiguration(endpointConfiguration)
+                                    .build();
+                }
+            }
+        }
+        ensureBucketReady(client);
+        return client;
+    }
 
-        AwsClientBuilder.EndpointConfiguration endpointConfiguration =
-                new AwsClientBuilder.EndpointConfiguration(
-                        defaultConfig.getEndpoint(), defaultConfig.getRegion());
+    private void ensureBucketReady(AmazonS3 currentClient) {
+        if (bucketChecked) {
+            return;
+        }
+        synchronized (this) {
+            if (bucketChecked) {
+                return;
+            }
+            String bucket = defaultConfig.getBucket();
+            if (!currentClient.doesBucketExistV2(bucket)) {
+                throw new ServiceException("Bucket " + bucket + " 不存在");
+            }
 
-        AmazonS3ClientBuilder builder = AmazonS3ClientBuilder.standard();
-
-        AmazonS3 client =
-                builder.withCredentials(new AWSStaticCredentialsProvider(credentials))
-                        .withEndpointConfiguration(endpointConfiguration)
-                        .build();
-
-        // 检查bucket是否存在
-        if (client.doesBucketExistV2(defaultConfig.getBucket())) {
-            // 确保bucket为私有访问权限
-            AccessControlList acl = client.getBucketAcl(defaultConfig.getBucket());
+            AccessControlList acl = currentClient.getBucketAcl(bucket);
             boolean isPrivate = true;
-
-            // 检查是否有公开访问的权限
             for (Grant grant : acl.getGrantsAsList()) {
                 if (grant.getGrantee() instanceof GroupGrantee
                         && (GroupGrantee.AllUsers.equals(grant.getGrantee())
@@ -90,17 +123,11 @@ public class S3Util {
                     break;
                 }
             }
-
             if (!isPrivate) {
-                // 如果不是私有的，抛出异常
-                throw new ServiceException("Bucket " + defaultConfig.getBucket() + " 必须设置为私有访问权限");
+                throw new ServiceException("Bucket " + bucket + " 必须设置为私有访问权限");
             }
-        } else {
-            // 如果bucket不存在，抛出异常
-            throw new ServiceException("Bucket " + defaultConfig.getBucket() + " 不存在");
+            bucketChecked = true;
         }
-
-        return client;
     }
 
     @SneakyThrows
@@ -143,10 +170,7 @@ public class S3Util {
                         .withPartNumber(partNumber)
                         .withInputStream(inputStream)
                         .withPartSize(file.length);
-
-        // 上传分段文件
-        UploadPartResult uploadPartResult = getClient().uploadPart(uploadPartRequest);
-        return uploadPartResult;
+        return getClient().uploadPart(uploadPartRequest);
     }
 
     public List<PartSummary> listParts(String uploadId, String filename) {
@@ -167,38 +191,32 @@ public class S3Util {
         GeneratePresignedUrlRequest request =
                 new GeneratePresignedUrlRequest(
                         defaultConfig.getBucket(), filename, HttpMethod.PUT);
-        request.setExpiration(new Date(System.currentTimeMillis() + 3600 * 1000)); // 一个小时有效期
-        request.addRequestParameter("partNumber", partNumber); // 分块索引
-        request.addRequestParameter("uploadId", uploadId); // uploadId
+        request.setExpiration(new Date(System.currentTimeMillis() + 3600 * 1000));
+        request.addRequestParameter("partNumber", partNumber);
+        request.addRequestParameter("uploadId", uploadId);
         return getClient().generatePresignedUrl(request).toString();
     }
 
     @SneakyThrows
     public String merge(String filename, String uploadId) {
-        AmazonS3 client = getClient();
-
+        AmazonS3 currentClient = getClient();
         ListPartsRequest listPartsRequest =
                 new ListPartsRequest(defaultConfig.getBucket(), filename, uploadId);
-        PartListing parts = client.listParts(listPartsRequest);
+        PartListing parts = currentClient.listParts(listPartsRequest);
         if (parts.getParts().isEmpty()) {
             throw new ServiceException("没有已上传的分片文件");
         }
 
         List<PartETag> eTags = new ArrayList<>();
         parts.getParts()
-                .forEach(
-                        item -> {
-                            eTags.add(new PartETag(item.getPartNumber(), item.getETag()));
-                        });
+                .forEach(item -> eTags.add(new PartETag(item.getPartNumber(), item.getETag())));
 
         CompleteMultipartUploadRequest request = new CompleteMultipartUploadRequest();
         request.setBucketName(defaultConfig.getBucket());
         request.setKey(filename);
         request.setUploadId(uploadId);
         request.setPartETags(eTags);
-
-        client.completeMultipartUpload(request);
-
+        currentClient.completeMultipartUpload(request);
         return generateEndpointPreSignUrl(filename);
     }
 
@@ -218,21 +236,28 @@ public class S3Util {
     }
 
     public String generateEndpointPreSignUrl(String path) {
-        return generateEndpointPreSignUrl(path, "");
+        return generateEndpointPreSignUrl(path, "", 3600L * 3);
     }
 
     public String generateEndpointPreSignUrl(String path, String name) {
+        return generateEndpointPreSignUrl(path, name, 3600L * 3);
+    }
+
+    public String generateEndpointPreSignUrl(String path, String name, long expireSeconds) {
         GeneratePresignedUrlRequest request =
                 new GeneratePresignedUrlRequest(defaultConfig.getBucket(), path, HttpMethod.GET);
-        request.setExpiration(new Date(System.currentTimeMillis() + 3600 * 3000)); // 三个小时有效期
-
-        // 文件名不为空
+        request.setExpiration(new Date(System.currentTimeMillis() + expireSeconds * 1000));
         if (StringUtil.isNotEmpty(name)) {
             ResponseHeaderOverrides responseHeaders = new ResponseHeaderOverrides();
             responseHeaders.setContentDisposition("attachment; filename=\"" + name + "\"");
             request.setResponseHeaders(responseHeaders);
         }
-
         return getClient().generatePresignedUrl(request).toString();
+    }
+
+    @SneakyThrows
+    public byte[] getBytes(String path) {
+        S3Object s3Object = getClient().getObject(defaultConfig.getBucket(), path);
+        return s3Object.getObjectContent().readAllBytes();
     }
 }

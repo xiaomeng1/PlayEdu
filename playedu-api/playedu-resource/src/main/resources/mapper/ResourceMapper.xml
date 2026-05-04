@@ -14,6 +14,8 @@
         <result property="disk" column="disk" jdbcType="VARCHAR"/>
         <result property="path" column="path" jdbcType="VARCHAR"/>
         <result property="createdAt" column="created_at" jdbcType="TIMESTAMP"/>
+        <result property="hlsStatus" column="hls_status" jdbcType="TINYINT"/>
+        <result property="hlsKey" column="hls_key" jdbcType="VARCHAR"/>
         <result property="parentId" column="parent_id" jdbcType="INTEGER"/>
         <result property="isHidden" column="is_hidden" jdbcType="TINYINT"/>
     </resultMap>
@@ -22,7 +24,7 @@
         id
         ,admin_id,type,
         name,extension,size,
-        disk,path,created_at,parent_id,
+        disk,path,created_at,hls_status,hls_key,parent_id,
         is_hidden
     </sql>
 

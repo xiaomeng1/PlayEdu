@@ -61,6 +61,11 @@ public class Resource implements Serializable {
     @JsonProperty("created_at")
     private Date createdAt;
 
+    @JsonProperty("hls_status")
+    private Integer hlsStatus;
+
+    @JsonIgnore private String hlsKey;
+
     /** 所属素材 */
     @JsonProperty("parent_id")
     private Integer parentId;
@@ -108,6 +113,12 @@ public class Resource implements Serializable {
                 && (this.getCreatedAt() == null
                         ? other.getCreatedAt() == null
                         : this.getCreatedAt().equals(other.getCreatedAt()))
+                && (this.getHlsStatus() == null
+                        ? other.getHlsStatus() == null
+                        : this.getHlsStatus().equals(other.getHlsStatus()))
+                && (this.getHlsKey() == null
+                        ? other.getHlsKey() == null
+                        : this.getHlsKey().equals(other.getHlsKey()))
                 && (this.getParentId() == null
                         ? other.getParentId() == null
                         : this.getParentId().equals(other.getParentId()))
@@ -129,6 +140,8 @@ public class Resource implements Serializable {
         result = prime * result + ((getDisk() == null) ? 0 : getDisk().hashCode());
         result = prime * result + ((getPath() == null) ? 0 : getPath().hashCode());
         result = prime * result + ((getCreatedAt() == null) ? 0 : getCreatedAt().hashCode());
+        result = prime * result + ((getHlsStatus() == null) ? 0 : getHlsStatus().hashCode());
+        result = prime * result + ((getHlsKey() == null) ? 0 : getHlsKey().hashCode());
         result = prime * result + ((getParentId() == null) ? 0 : getParentId().hashCode());
         result = prime * result + ((getIsHidden() == null) ? 0 : getIsHidden().hashCode());
         return result;
@@ -149,6 +162,8 @@ public class Resource implements Serializable {
         sb.append(", disk=").append(disk);
         sb.append(", path=").append(path);
         sb.append(", createdAt=").append(createdAt);
+        sb.append(", hlsStatus=").append(hlsStatus);
+        sb.append(", hlsKey=").append(hlsKey);
         sb.append(", parentId=").append(parentId);
         sb.append(", isHidden=").append(isHidden);
         sb.append(", serialVersionUID=").append(serialVersionUID);

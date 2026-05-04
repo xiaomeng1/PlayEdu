@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 杭州白书科技有限公司
+ * Copyright (C) 2023 鏉窞鐧戒功绉戞妧鏈夐檺鍏徃
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 import xyz.playedu.api.event.UserCourseHourFinishedEvent;
 import xyz.playedu.api.event.UserLearnCourseUpdateEvent;
 import xyz.playedu.api.request.frontend.CourseHourRecordRequest;
+import xyz.playedu.api.service.HlsTokenService;
 import xyz.playedu.common.context.FCtx;
 import xyz.playedu.common.types.JsonResponse;
 import xyz.playedu.common.util.MemoryDistributedLock;
@@ -40,11 +41,6 @@ import xyz.playedu.course.service.UserCourseHourRecordService;
 import xyz.playedu.resource.domain.Resource;
 import xyz.playedu.resource.service.ResourceService;
 
-/**
- * @Author 杭州白书科技有限公司
- *
- * @create 2023/3/20 14:59
- */
 @RestController
 @RequestMapping("/api/v1/course/{courseId}/hour")
 public class HourController {
@@ -57,7 +53,6 @@ public class HourController {
 
     @Autowired private UserCourseHourRecordService userCourseHourRecordService;
 
-    // ------- CACHE ----------
     @Autowired private UserCanSeeCourseCache userCanSeeCourseCache;
 
     @Autowired private MemoryDistributedLock distributedLock;
@@ -65,6 +60,8 @@ public class HourController {
     @Autowired private UserLastLearnTimeCache userLastLearnTimeCache;
 
     @Autowired private ApplicationContext ctx;
+
+    @Autowired private HlsTokenService hlsTokenService;
 
     @GetMapping("/{id}")
     @SneakyThrows
@@ -76,7 +73,6 @@ public class HourController {
 
         UserCourseHourRecord userCourseHourRecord = null;
         if (FCtx.getId() != null && FCtx.getId() > 0) {
-            // 学员已登录
             userCourseHourRecord = userCourseHourRecordService.find(FCtx.getId(), courseId, id);
         }
 
@@ -98,17 +94,33 @@ public class HourController {
         Resource resource = resourceService.findOrFail(hour.getRid());
 
         HashMap<String, Object> data = new HashMap<>();
-        // 获取资源签名url
-        data.put(
-                "resource_url",
-                resourceService.chunksPreSignUrlByIds(
-                        new ArrayList<>() {
-                            {
-                                add(resource.getId());
-                            }
-                        }));
-        data.put("extension", resource.getExtension()); // 视频格式
-        data.put("duration", resourceService.duration(resource.getId())); // 视频时长
+        if (resourceService.isHlsReady(resource)) {
+            String token = hlsTokenService.issue(resource.getId(), FCtx.getId());
+            data.put(
+                    "resource_url",
+                    new HashMap<Integer, String>() {
+                        {
+                            put(
+                                    resource.getId(),
+                                    "/api/v1/hls/"
+                                            + resource.getId()
+                                            + "/index.m3u8?token="
+                                            + token);
+                        }
+                    });
+        } else {
+            data.put(
+                    "resource_url",
+                    resourceService.chunksPreSignUrlByIds(
+                            new ArrayList<>() {
+                                {
+                                    add(resource.getId());
+                                }
+                            }));
+        }
+        data.put("extension", resource.getExtension());
+        data.put("duration", resourceService.duration(resource.getId()));
+        data.put("hls_status", resource.getHlsStatus());
 
         return JsonResponse.data(data);
     }
@@ -127,7 +139,6 @@ public class HourController {
         CourseHour hour = hourService.findOrFail(id, courseId);
         userCanSeeCourseCache.check(FCtx.getId(), courseId, true);
 
-        // 获取锁
         String lockKey = String.format("record:%d", FCtx.getId());
         boolean tryLock = distributedLock.tryLock(lockKey, 5, TimeUnit.SECONDS);
         if (!tryLock) {
@@ -144,7 +155,6 @@ public class HourController {
                                 this, FCtx.getId(), courseId, hour.getId()));
             }
         } finally {
-            // 此处未考虑上面代码执行失败释放锁
             distributedLock.releaseLock(lockKey);
         }
 
@@ -158,7 +168,6 @@ public class HourController {
             @PathVariable(name = "id") Integer id) {
         userCanSeeCourseCache.check(FCtx.getId(), courseId, true);
 
-        // 获取锁
         String lockKey = String.format("ping:%d", FCtx.getId());
         boolean tryLock = distributedLock.tryLock(lockKey, 5, TimeUnit.SECONDS);
         if (!tryLock) {
@@ -167,10 +176,7 @@ public class HourController {
 
         try {
             Long curTime = System.currentTimeMillis();
-
-            // 最近一次学习时间
             Long lastTime = userLastLearnTimeCache.get(FCtx.getId());
-            // 最大周期为10s+0.5s的网络延迟
             if (lastTime == null || curTime - lastTime > 10500) {
                 lastTime = curTime - 10000;
             }
@@ -181,7 +187,6 @@ public class HourController {
                     new UserLearnCourseUpdateEvent(
                             this, FCtx.getId(), courseId, id, lastTime, curTime));
         } finally {
-            // 此处未考虑上面代码执行失败释放锁
             distributedLock.releaseLock(lockKey);
         }
 

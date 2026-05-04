@@ -73,4 +73,12 @@ public interface ResourceService extends IService<Resource> {
     Map<Integer, String> chunksPreSignUrlByIds(List<Integer> ids);
 
     Map<Integer, String> downloadResById(Integer id);
+
+    void scheduleHlsTranscode(Integer id);
+
+    boolean isHlsReady(Resource resource);
+
+    String getHlsManifest(Integer resourceId, String keyUrl, long expireSeconds);
+
+    byte[] getHlsKey(Integer resourceId);
 }

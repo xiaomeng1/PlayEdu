@@ -44,7 +44,9 @@ public class FrontInterceptor implements HandlerInterceptor {
     public boolean preHandle(
             HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        if (FrontendConstant.UN_AUTH_URI_WHITELIST.contains(request.getRequestURI())) {
+        if (FrontendConstant.UN_AUTH_URI_WHITELIST.contains(request.getRequestURI())
+                || request.getRequestURI().startsWith("/api/v1/hls/")
+                || request.getRequestURI().startsWith("/v1/hls/")) {
             return HandlerInterceptor.super.preHandle(request, response, handler);
         }
 
