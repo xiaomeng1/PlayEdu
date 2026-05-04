@@ -19,9 +19,17 @@ COPY playedu-api /app
 
 WORKDIR /app
 
+RUN chmod +x /app/mvnw
+RUN sed -i 's/\r$//' /app/mvnw
 RUN /app/mvnw -Dmaven.test.skip=true clean package
 
 FROM registry.cn-hangzhou.aliyuncs.com/hzbs/eclipse-temurin:17 AS base
+
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com/ubuntu/|https://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=java-builder /app/playedu-api/target/playedu-api.jar /app/api/app.jar
 

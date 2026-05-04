@@ -139,6 +139,7 @@ const CoursePlayPage = () => {
   };
 
   const initDPlayer = (playUrl: string, isTrySee: number, params: any) => {
+    const isHls = playUrl.includes(".m3u8");
     let banDrag =
       systemConfig.playerIsDisabledDrag &&
       watchRef.current < totalRef.current &&
@@ -149,6 +150,7 @@ const CoursePlayPage = () => {
       video: {
         url: playUrl,
         pic: systemConfig.playerPoster,
+        type: isHls ? "hls" : "auto",
       },
       try: isTrySee === 1,
       bulletSecret: {
