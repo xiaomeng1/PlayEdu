@@ -32,4 +32,6 @@ public interface UserLoginRecordService extends IService<UserLoginRecord> {
     void logout(Integer userid, String jti);
 
     void remove(Integer userId);
+
+    boolean isActive(Integer userId, String jti);
 }

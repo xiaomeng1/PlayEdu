@@ -78,7 +78,9 @@ public interface ResourceService extends IService<Resource> {
 
     boolean isHlsReady(Resource resource);
 
-    String getHlsManifest(Integer resourceId, String keyUrl, long expireSeconds);
+    String getHlsManifest(Integer resourceId);
 
     byte[] getHlsKey(Integer resourceId);
+
+    String getHlsSegmentPreSignUrl(Integer resourceId, String segmentName, long expireSeconds);
 }

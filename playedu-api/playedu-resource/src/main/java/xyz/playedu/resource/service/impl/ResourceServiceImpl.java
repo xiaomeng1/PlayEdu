@@ -22,8 +22,6 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -52,9 +50,6 @@ import xyz.playedu.resource.service.ResourceService;
 @Slf4j
 public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
         implements ResourceService {
-
-    private static final Pattern HLS_SEGMENT_LINE =
-            Pattern.compile("^(?!#)([^\\r\\n]+)$", Pattern.MULTILINE);
 
     @Autowired private ResourceExtraService resourceExtraService;
 
@@ -297,43 +292,14 @@ public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
     }
 
     @Override
-    public String getHlsManifest(Integer resourceId, String keyUrl, long expireSeconds) {
-        long startAt = System.currentTimeMillis();
+    public String getHlsManifest(Integer resourceId) {
         Resource resource = getById(resourceId);
         if (!isHlsReady(resource)) {
             log.warn("hls manifest requested before ready, resourceId={}, hlsStatus={}",
                     resourceId, resource == null ? null : resource.getHlsStatus());
             return null;
         }
-
-        S3Util s3Util = new S3Util(appConfigService.getS3Config());
-        String manifest = s3Util.getContent(hlsPlaylistPath(resource.getPath()));
-        manifest =
-                manifest.replaceAll(
-                        "#EXT-X-KEY:METHOD=AES-128,URI=\"[^\"]+\"",
-                        Matcher.quoteReplacement("#EXT-X-KEY:METHOD=AES-128,URI=\"" + keyUrl + "\""));
-
-        Matcher matcher = HLS_SEGMENT_LINE.matcher(manifest);
-        StringBuffer buffer = new StringBuffer();
-        String prefix = hlsPrefix(resource.getPath());
-        int segmentCount = 0;
-        while (matcher.find()) {
-            String segment = matcher.group(1).trim();
-            if (segment.isEmpty() || segment.startsWith("http://") || segment.startsWith("https://")) {
-                continue;
-            }
-            String segmentUrl =
-                    s3Util.generateEndpointPreSignUrl(prefix + segment, "", expireSeconds);
-            matcher.appendReplacement(buffer, Matcher.quoteReplacement(segmentUrl));
-            segmentCount++;
-        }
-        matcher.appendTail(buffer);
-        log.info(
-                "generated hls manifest, resourceId={}, segmentCount={}, elapsedMs={}",
-                resourceId,
-                segmentCount,
-                System.currentTimeMillis() - startAt);
-        return buffer.toString();
+        return new S3Util(appConfigService.getS3Config()).getContent(hlsPlaylistPath(resource.getPath()));
     }
 
     @Override
@@ -345,6 +311,22 @@ public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
         return HexFormat.of().parseHex(resource.getHlsKey());
     }
 
+    @Override
+    public String getHlsSegmentPreSignUrl(Integer resourceId, String segmentName, long expireSeconds) {
+        Resource resource = getById(resourceId);
+        if (!isHlsReady(resource)) {
+            log.warn("hls segment requested before ready, resourceId={}, segment={}",
+                    resourceId, segmentName);
+            return null;
+        }
+        if (!isSafeHlsSegmentName(segmentName)) {
+            log.warn("unsafe hls segment requested, resourceId={}, segment={}", resourceId, segmentName);
+            return null;
+        }
+        return new S3Util(appConfigService.getS3Config())
+                .generateEndpointPreSignUrl(hlsPrefix(resource.getPath()) + segmentName, "", expireSeconds);
+    }
+
     private String hlsPrefix(String originalPath) {
         int dotIndex = originalPath.lastIndexOf('.');
         String basePath = dotIndex > -1 ? originalPath.substring(0, dotIndex) : originalPath;
@@ -353,5 +335,11 @@ public class ResourceServiceImpl extends ServiceImpl<ResourceMapper, Resource>
 
     private String hlsPlaylistPath(String originalPath) {
         return hlsPrefix(originalPath) + "index.m3u8";
+    }
+
+    private boolean isSafeHlsSegmentName(String segmentName) {
+        return StringUtil.isNotEmpty(segmentName)
+                && segmentName.matches("(?i)[A-Za-z0-9._-]+\\.(ts|m4s|aac|mp4|vtt)")
+                && !segmentName.contains("..");
     }
 }

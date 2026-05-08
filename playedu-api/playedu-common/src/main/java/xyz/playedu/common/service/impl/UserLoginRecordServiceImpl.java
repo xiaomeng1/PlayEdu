@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import xyz.playedu.common.domain.UserLoginRecord;
 import xyz.playedu.common.mapper.UserLoginRecordMapper;
 import xyz.playedu.common.service.UserLoginRecordService;
+import xyz.playedu.common.util.MemoryCacheUtil;
 
 /**
  * @author tengteng
@@ -29,6 +30,8 @@ import xyz.playedu.common.service.UserLoginRecordService;
 @Service
 public class UserLoginRecordServiceImpl extends ServiceImpl<UserLoginRecordMapper, UserLoginRecord>
         implements UserLoginRecordService {
+    private static final long ACTIVE_LOGIN_CACHE_SECONDS = 30L;
+
     @Override
     public UserLoginRecord store(
             Integer userId,
@@ -54,6 +57,7 @@ public class UserLoginRecordServiceImpl extends ServiceImpl<UserLoginRecordMappe
 
     @Override
     public void logout(Integer userid, String jti) {
+        MemoryCacheUtil.del(String.format("login-active:%d:%s", userid, jti));
         UserLoginRecord record =
                 getOne(
                         query().getWrapper()
@@ -73,5 +77,26 @@ public class UserLoginRecordServiceImpl extends ServiceImpl<UserLoginRecordMappe
     @Override
     public void remove(Integer userId) {
         remove(query().getWrapper().eq("user_id", userId));
+    }
+
+    @Override
+    public boolean isActive(Integer userId, String jti) {
+        if (userId == null || jti == null || jti.isBlank()) {
+            return false;
+        }
+        String cacheKey = String.format("login-active:%d:%s", userId, jti);
+        if (MemoryCacheUtil.exists(cacheKey)) {
+            return "1".equals(MemoryCacheUtil.get(cacheKey));
+        }
+        boolean active =
+                count(
+                                query().getWrapper()
+                                        .eq("user_id", userId)
+                                        .eq("jti", jti)
+                                        .eq("is_logout", 0)
+                                        .ge("expired", System.currentTimeMillis() / 1000))
+                        > 0;
+        MemoryCacheUtil.set(cacheKey, active ? "1" : "0", ACTIVE_LOGIN_CACHE_SECONDS);
+        return active;
     }
 }

@@ -95,7 +95,9 @@ public class HourController {
 
         HashMap<String, Object> data = new HashMap<>();
         if (resourceService.isHlsReady(resource)) {
-            String token = hlsTokenService.issue(resource.getId(), FCtx.getId());
+            String token =
+                    hlsTokenService.issue(
+                            resource.getId(), FCtx.getId(), courseId, FCtx.getJwtJti());
             data.put(
                     "resource_url",
                     new HashMap<Integer, String>() {
