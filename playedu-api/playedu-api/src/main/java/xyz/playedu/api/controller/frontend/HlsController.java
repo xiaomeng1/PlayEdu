@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import xyz.playedu.api.service.HlsPlaybackGuardService;
 import xyz.playedu.api.service.HlsTokenService;
 import xyz.playedu.common.exception.ServiceException;
 import xyz.playedu.course.caches.UserCanSeeCourseCache;
@@ -46,6 +47,8 @@ public class HlsController {
     @Autowired private ResourceService resourceService;
 
     @Autowired private HlsTokenService hlsTokenService;
+
+    @Autowired private HlsPlaybackGuardService hlsPlaybackGuardService;
 
     @Autowired private UserCanSeeCourseCache userCanSeeCourseCache;
 
@@ -88,7 +91,12 @@ public class HlsController {
             @PathVariable Integer resourceId,
             @PathVariable String segmentName,
             @RequestParam String token) {
-        checkToken(resourceId, token);
+        HlsTokenService.Payload payload = checkToken(resourceId, token);
+        HlsPlaybackGuardService.GuardDecision decision =
+                hlsPlaybackGuardService.beforeSegmentAccess(payload, segmentName);
+        if (!decision.isAllowed()) {
+            throw new ServiceException(decision.getReason());
+        }
         String url =
                 resourceService.getHlsSegmentPreSignUrl(
                         resourceId, segmentName, SEGMENT_EXPIRE_SECONDS);

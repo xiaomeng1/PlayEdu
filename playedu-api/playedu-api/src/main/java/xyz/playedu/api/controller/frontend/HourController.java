@@ -25,7 +25,10 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import xyz.playedu.api.event.UserCourseHourFinishedEvent;
 import xyz.playedu.api.event.UserLearnCourseUpdateEvent;
+import xyz.playedu.api.request.frontend.CourseHourPingRequest;
 import xyz.playedu.api.request.frontend.CourseHourRecordRequest;
+import xyz.playedu.api.request.frontend.CourseHourSeekRequest;
+import xyz.playedu.api.service.HlsPlaybackGuardService;
 import xyz.playedu.api.service.HlsTokenService;
 import xyz.playedu.common.context.FCtx;
 import xyz.playedu.common.types.JsonResponse;
@@ -63,6 +66,8 @@ public class HourController {
 
     @Autowired private HlsTokenService hlsTokenService;
 
+    @Autowired private HlsPlaybackGuardService hlsPlaybackGuardService;
+
     @GetMapping("/{id}")
     @SneakyThrows
     public JsonResponse detail(
@@ -98,6 +103,10 @@ public class HourController {
             String token =
                     hlsTokenService.issue(
                             resource.getId(), FCtx.getId(), courseId, FCtx.getJwtJti());
+            HlsTokenService.Payload payload = hlsTokenService.resolve(token, resource.getId());
+            if (payload != null) {
+                hlsPlaybackGuardService.onPlayIssued(payload);
+            }
             data.put(
                     "resource_url",
                     new HashMap<Integer, String>() {
@@ -167,8 +176,10 @@ public class HourController {
     @SneakyThrows
     public JsonResponse ping(
             @PathVariable(name = "courseId") Integer courseId,
-            @PathVariable(name = "id") Integer id) {
+            @PathVariable(name = "id") Integer id,
+            @RequestBody(required = false) CourseHourPingRequest req) {
         userCanSeeCourseCache.check(FCtx.getId(), courseId, true);
+        CourseHour hour = hourService.findOrFail(id, courseId);
 
         String lockKey = String.format("ping:%d", FCtx.getId());
         boolean tryLock = distributedLock.tryLock(lockKey, 5, TimeUnit.SECONDS);
@@ -184,6 +195,14 @@ public class HourController {
             }
 
             userLastLearnTimeCache.put(FCtx.getId(), curTime);
+            if (req != null && req.getToken() != null && !req.getToken().isBlank()) {
+                HlsTokenService.Payload payload = hlsTokenService.resolve(req.getToken(), hour.getRid());
+                if (payload != null
+                        && payload.getUserId().equals(FCtx.getId())
+                        && payload.getCourseId().equals(courseId)) {
+                    hlsPlaybackGuardService.onPing(payload, id);
+                }
+            }
 
             ctx.publishEvent(
                     new UserLearnCourseUpdateEvent(
@@ -192,6 +211,24 @@ public class HourController {
             distributedLock.releaseLock(lockKey);
         }
 
+        return JsonResponse.success();
+    }
+
+    @PostMapping("/{id}/seek")
+    @SneakyThrows
+    public JsonResponse seek(
+            @PathVariable(name = "courseId") Integer courseId,
+            @PathVariable(name = "id") Integer id,
+            @RequestBody @Validated CourseHourSeekRequest req) {
+        userCanSeeCourseCache.check(FCtx.getId(), courseId, true);
+        CourseHour hour = hourService.findOrFail(id, courseId);
+        HlsTokenService.Payload payload = hlsTokenService.resolve(req.getToken(), hour.getRid());
+        if (payload == null
+                || !payload.getUserId().equals(FCtx.getId())
+                || !payload.getCourseId().equals(courseId)) {
+            return JsonResponse.error("seek token is invalid");
+        }
+        hlsPlaybackGuardService.onSeek(payload, req.getFrom(), req.getTo());
         return JsonResponse.success();
     }
 }

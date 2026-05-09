@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +56,8 @@ public class HlsTokenService {
                         + ":"
                         + jwtJti
                         + ":"
+                        + UUID.randomUUID()
+                        + ":"
                         + currentFingerprint()
                         + ":"
                         + expiresAt;
@@ -81,7 +84,7 @@ public class HlsTokenService {
             String payload =
                     new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8);
             String[] payloadParts = payload.split(":");
-            if (payloadParts.length != 6) {
+            if (payloadParts.length != 7) {
                 return null;
             }
             Payload tokenPayload =
@@ -91,7 +94,8 @@ public class HlsTokenService {
                             Integer.parseInt(payloadParts[2]),
                             payloadParts[3],
                             payloadParts[4],
-                            Long.parseLong(payloadParts[5]));
+                            payloadParts[5],
+                            Long.parseLong(payloadParts[6]));
             if (!tokenPayload.getResourceId().equals(resourceId)
                     || tokenPayload.getExpiresAt() < System.currentTimeMillis() / 1000
                     || !tokenPayload.getFingerprint().equals(currentFingerprint())
@@ -136,6 +140,7 @@ public class HlsTokenService {
         private final Integer userId;
         private final Integer courseId;
         private final String jwtJti;
+        private final String playbackSessionId;
         private final String fingerprint;
         private final Long expiresAt;
 
@@ -144,12 +149,14 @@ public class HlsTokenService {
                 Integer userId,
                 Integer courseId,
                 String jwtJti,
+                String playbackSessionId,
                 String fingerprint,
                 Long expiresAt) {
             this.resourceId = resourceId;
             this.userId = userId;
             this.courseId = courseId;
             this.jwtJti = jwtJti;
+            this.playbackSessionId = playbackSessionId;
             this.fingerprint = fingerprint;
             this.expiresAt = expiresAt;
         }
@@ -168,6 +175,10 @@ public class HlsTokenService {
 
         public String getJwtJti() {
             return jwtJti;
+        }
+
+        public String getPlaybackSessionId() {
+            return playbackSessionId;
         }
 
         public String getFingerprint() {
