@@ -42,6 +42,9 @@ const CoursePlayPage = () => {
   const playRef = useRef(0);
   const watchRef = useRef(0);
   const totalRef = useRef(0);
+  const hlsTokenRef = useRef("");
+  const pendingSeekFromRef = useRef<number | null>(null);
+  const suppressSeekReportRef = useRef(false);
 
   useEffect(() => {
     getCourse();
@@ -85,7 +88,6 @@ const CoursePlayPage = () => {
         setTotalHours(arr);
         totalHours = arr;
       }
-      //判断是否是最后的课时
       const index = totalHours.findIndex(
         (i: any) => i.id === Number(params.hourId)
       );
@@ -138,8 +140,9 @@ const CoursePlayPage = () => {
     );
   };
 
-  const initDPlayer = (playUrl: string, isTrySee: number, params: any) => {
-    const isHls = playUrl.includes(".m3u8");
+  const initDPlayer = (currentPlayUrl: string, isTrySee: number, lastPos: any) => {
+    const isHls = currentPlayUrl.includes(".m3u8");
+    hlsTokenRef.current = extractHlsToken(currentPlayUrl);
     let banDrag =
       systemConfig.playerIsDisabledDrag &&
       watchRef.current < totalRef.current &&
@@ -148,7 +151,7 @@ const CoursePlayPage = () => {
       container: document.getElementById("meedu-player-container"),
       autoplay: false,
       video: {
-        url: playUrl,
+        url: currentPlayUrl,
         pic: systemConfig.playerPoster,
         type: isHls ? "hls" : "auto",
       },
@@ -164,9 +167,8 @@ const CoursePlayPage = () => {
         opacity: Number(systemConfig.playerBulletSecretOpacity),
       },
       ban_drag: banDrag,
-      last_see_pos: params,
+      last_see_pos: lastPos,
     });
-    // 监听播放进度更新evt
     window.player.on("timeupdate", () => {
       let currentTime = parseInt(window.player.video.currentTime);
       if (
@@ -175,11 +177,33 @@ const CoursePlayPage = () => {
         currentTime - playRef.current >= 2 &&
         currentTime > watchRef.current
       ) {
-        Toast.show("首次学习禁止快进");
+        Toast.show("棣栨瀛︿範绂佹蹇繘");
+        suppressSeekReportRef.current = true;
         window.player.seek(watchRef.current);
       } else {
         setPlayingTime(currentTime);
         playTimeUpdate(parseInt(window.player.video.currentTime), false);
+      }
+    });
+    window.player.on("seeking", () => {
+      pendingSeekFromRef.current = playRef.current;
+    });
+    window.player.on("seeked", () => {
+      const to = parseInt(window.player.video.currentTime);
+      const from = pendingSeekFromRef.current ?? playRef.current;
+      pendingSeekFromRef.current = null;
+      if (suppressSeekReportRef.current) {
+        suppressSeekReportRef.current = false;
+        return;
+      }
+      if (hlsTokenRef.current && Math.abs(to - from) >= 5) {
+        Course.playSeek(
+          Number(params.courseId),
+          Number(params.hourId),
+          hlsTokenRef.current,
+          from,
+          to
+        ).then(() => {});
       }
     });
     window.player.on("ended", () => {
@@ -188,6 +212,7 @@ const CoursePlayPage = () => {
         watchRef.current < totalRef.current &&
         window.player.video.duration - playRef.current >= 2
       ) {
+        suppressSeekReportRef.current = true;
         window.player.seek(playRef.current);
         return;
       }
@@ -208,9 +233,19 @@ const CoursePlayPage = () => {
         Number(params.hourId),
         duration
       ).then((res: any) => {});
-      Course.playPing(Number(params.courseId), Number(params.hourId)).then(
-        (res: any) => {}
-      );
+      Course.playPing(
+        Number(params.courseId),
+        Number(params.hourId),
+        hlsTokenRef.current
+      ).then((res: any) => {});
+    }
+  };
+
+  const extractHlsToken = (url: string) => {
+    try {
+      return new URL(url, window.location.origin).searchParams.get("token") || "";
+    } catch (e) {
+      return "";
     }
   };
 
@@ -220,7 +255,7 @@ const CoursePlayPage = () => {
     );
     if (index === totalHours.length - 1) {
       setIsLastpage(true);
-      Toast.show("已经是最后一节了！");
+      Toast.show("宸茬粡鏄渶鍚庝竴鑺備簡锛?");
     } else if (index < totalHours.length - 1) {
       setIsLastpage(false);
       navigate(`/course/${params.courseId}/hour/${totalHours[index + 1].id}`, {
@@ -271,7 +306,7 @@ const CoursePlayPage = () => {
                     navigate(-1);
                   }}
                 >
-                  恭喜你学完最后一节
+                  鎭枩浣犲瀹屾渶鍚庝竴鑺?
                 </div>
               )}
               {!isLastpage && (
@@ -283,7 +318,7 @@ const CoursePlayPage = () => {
                     goNextVideo();
                   }}
                 >
-                  播放下一节
+                  鎾斁涓嬩竴鑺?
                 </div>
               )}
             </div>

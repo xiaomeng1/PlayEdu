@@ -23,8 +23,24 @@ export function record(courseId: number, hourId: number, duration: number) {
 }
 
 //观看ping
-export function playPing(courseId: number, hourId: number) {
-  return client.post(`/api/v1/course/${courseId}/hour/${hourId}/ping`, {});
+export function playPing(courseId: number, hourId: number, token?: string) {
+  return client.post(`/api/v1/course/${courseId}/hour/${hourId}/ping`, {
+    token: token || "",
+  });
+}
+
+export function playSeek(
+  courseId: number,
+  hourId: number,
+  token: string,
+  from: number,
+  to: number
+) {
+  return client.post(`/api/v1/course/${courseId}/hour/${hourId}/seek`, {
+    token,
+    from,
+    to,
+  });
 }
 
 //最近学习课程
